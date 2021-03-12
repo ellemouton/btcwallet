@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/gozmq"
+	"github.com/lightninglabs/neutrino/cache/lru"
 )
 
 const (
@@ -36,6 +37,10 @@ const (
 	// seqNumLen is the length of the sequence number of a message sent from
 	// bitcoind through ZMQ.
 	seqNumLen = 4
+
+	// defaultBlockCacheSize is the size (in bytes) of blocks that the LFU
+	// block cache will keep in memory.
+	defaultBlockCacheSize uint64 = 4096 * 1024 * 5 // 20 MB
 )
 
 // BitcoindConn represents a persistent client connection to a bitcoind node
@@ -69,15 +74,25 @@ type BitcoindConn struct {
 	rescanClientsMtx sync.Mutex
 	rescanClients    map[uint64]*BitcoindClient
 
+	// blockCache is a LRU block cache.
+	blockCache *blockCache
+
 	quit chan struct{}
 	wg   sync.WaitGroup
+}
+
+// BitcoindConnConfig structure used to configure the BitcoindConn.
+type BitcoindConnConfig struct {
+	// BlockCacheSize is used to configure the maximum size (in bytes) to
+	// be used for the LFU block cache.
+	BlockCacheSize uint64
 }
 
 // NewBitcoindConn creates a client connection to the node described by the host
 // string. The ZMQ connections are established immediately to ensure liveness.
 // If the remote node does not operate on the same bitcoin network as described
 // by the passed chain parameters, the connection will be disconnected.
-func NewBitcoindConn(chainParams *chaincfg.Params,
+func NewBitcoindConn(cfg *BitcoindConnConfig, chainParams *chaincfg.Params,
 	host, user, pass, zmqBlockHost, zmqTxHost string,
 	zmqPollInterval time.Duration) (*BitcoindConn, error) {
 
@@ -117,6 +132,11 @@ func NewBitcoindConn(chainParams *chaincfg.Params,
 			"events: %v", err)
 	}
 
+	blockCacheSize := defaultBlockCacheSize
+	if cfg.BlockCacheSize != 0 {
+		blockCacheSize = cfg.BlockCacheSize
+	}
+
 	conn := &BitcoindConn{
 		chainParams:   chainParams,
 		client:        client,
@@ -124,6 +144,9 @@ func NewBitcoindConn(chainParams *chaincfg.Params,
 		zmqTxConn:     zmqTxConn,
 		rescanClients: make(map[uint64]*BitcoindClient),
 		quit:          make(chan struct{}),
+		blockCache: &blockCache{
+			cache: lru.NewCache(blockCacheSize),
+		},
 	}
 
 	return conn, nil
@@ -396,6 +419,11 @@ func (c *BitcoindConn) getCurrentNet() (wire.BitcoinNet, error) {
 	default:
 		return 0, fmt.Errorf("unknown network with genesis hash %v", hash)
 	}
+}
+
+// getBlock calls the getBlock function of the blockCache.
+func (c *BitcoindConn) getBlock(hash *chainhash.Hash) (*wire.MsgBlock, error) {
+	return c.blockCache.getBlock(hash, c.client.GetBlock)
 }
 
 // NewBitcoindClient returns a bitcoind client using the current bitcoind

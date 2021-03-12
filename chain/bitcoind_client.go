@@ -145,7 +145,7 @@ func (c *BitcoindClient) GetBlockHeight(hash *chainhash.Hash) (int32, error) {
 
 // GetBlock returns a block from the hash.
 func (c *BitcoindClient) GetBlock(hash *chainhash.Hash) (*wire.MsgBlock, error) {
-	return c.chainConn.client.GetBlock(hash)
+	return c.chainConn.getBlock(hash)
 }
 
 // GetBlockVerbose returns a verbose block from the hash.
