@@ -21,21 +21,43 @@ import (
 )
 
 // TestBitcoindEvents ensures that the BitcoindClient correctly delivers tx and
-// block notifications during normal chain growth and during a reorg.
+// block notifications for both the case where a ZMQ subscription is used and
+// for the case where RPC polling is used.
 func TestBitcoindEvents(t *testing.T) {
+	tests := []struct {
+		name       string
+		rpcPolling bool
+	}{
+		{
+			name:       "Events via ZMQ subscriptions",
+			rpcPolling: true,
+		},
+		{
+			name:       "Events via RPC Polling",
+			rpcPolling: true,
+		},
+	}
+
 	// Set up 2 btcd miners.
 	miner1, miner2 := setupMiners(t)
 
-	// Set up a bitcoind node and connect it to miner 1.
-	btcClient := setupBitcoind(t, miner1.P2PAddress())
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			// Set up a bitcoind node and connect it to miner 1.
+			btcClient := setupBitcoind(
+				t, miner1.P2PAddress(), test.rpcPolling,
+			)
 
-	// Test that the correct block connect and disconnect
-	// notifications are received during a re-org.
-	testReorg(t, miner1, miner2, btcClient)
+			// Test that the correct block connect and disconnect
+			// notifications are received during a re-org.
+			testReorg(t, miner1, miner2, btcClient)
 
-	// Test that the expected block and transaction
-	// notifications are received.
-	testNotifications(t, miner1, btcClient)
+			// Test that the expected block and transaction
+			// notifications are received.
+			testNotifications(t, miner1, btcClient)
+		})
+	}
 }
 
 // testNotifications tests that the correct notifications are received for
@@ -324,7 +346,9 @@ func setupMiners(t *testing.T) (*rpctest.Harness, *rpctest.Harness) {
 
 // setupBitcoind starts up a bitcoind node with either a zmq connection or
 // rpc polling connection and returns a client wrapper of this connection.
-func setupBitcoind(t *testing.T, minerAddr string) *BitcoindClient {
+func setupBitcoind(t *testing.T, minerAddr string,
+	rpcPolling bool) *BitcoindClient {
+
 	// Start a bitcoind instance and connect it to miner1.
 	tempBitcoindDir, err := ioutil.TempDir("", "bitcoind")
 	if err != nil {
@@ -371,15 +395,25 @@ func setupBitcoind(t *testing.T, minerAddr string) *BitcoindClient {
 		Host:        host,
 		User:        "weks",
 		Pass:        "weks",
-		ZMQConfig: &ZMQConfig{
-			ZMQBlockHost:    zmqBlockHost,
-			ZMQTxHost:       zmqTxHost,
-			ZMQReadDeadline: 5 * time.Second,
-		},
 		// Fields only required for pruned nodes, not
 		// needed for these tests.
 		Dialer:             nil,
 		PrunedModeMaxPeers: 0,
+	}
+
+	if rpcPolling {
+		cfg.PollingConfig = &PollingConfig{
+			Enable:               true,
+			BlockPollingInterval: time.Millisecond * 100,
+			TxPollingInterval:    time.Millisecond * 100,
+			MempoolEvictionAge:   time.Minute,
+		}
+	} else {
+		cfg.ZMQConfig = &ZMQConfig{
+			ZMQBlockHost:    zmqBlockHost,
+			ZMQTxHost:       zmqTxHost,
+			ZMQReadDeadline: 5 * time.Second,
+		}
 	}
 
 	chainConn, err := NewBitcoindConn(cfg)
