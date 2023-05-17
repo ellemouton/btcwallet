@@ -48,4 +48,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+replace github.com/lightninglabs/neutrino => github.com/ellemouton/neutrino v0.11.1-0.20230523145921-df858a8985ea
+
 go 1.18
